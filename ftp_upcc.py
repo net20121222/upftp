@@ -255,7 +255,7 @@ if __name__ == '__main__':
 	print ("emptylog:\n\t" + emptylog)
 	'''
 	# upload file and enptylog if los is none
-	ftpclient = FtpClient("cdn_mzc","cDN_5337cLgM","175.6.15.160")
+	ftpclient = FtpClient("user","passwd","127.0.0.1")
 	if not ftpclient.ftp_connect():
 		dir_lasttime = ftpclient.get_failedempty(emptylog)
 		for lastremoteday,lastremotelist in dir_lasttime.iteritems():
