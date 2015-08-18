@@ -12,9 +12,10 @@ class FtpFile(object):
 		self.uploadhour = int(uploadhour)
 		self.anapath = str(anapath)
 		self.dir_upfile = {}
-		self.localday = time.strftime("%Y%m%d",time.localtime(time.time()-uploadhour*60*60))
-		self.remoteday = time.strftime("%Y-%m-%d",time.localtime(time.time()-uploadhour*60*60))
-		self.localhour = time.strftime("%H",time.localtime(time.time()-uploadhour*60*60))
+		self.localday = time.strftime("%Y%m%d",time.localtime(time.time()-int(uploadhour)*60*60))
+		self.remoteday = time.strftime("%Y-%m-%d",time.localtime(time.time()-int(uploadhour)*60*60))
+		self.localhour = time.strftime("%H",time.localtime(time.time()-int(uploadhour)*60*60))
+		self.remotehour = time.strftime("%H",time.localtime(time.time()-(int(uploadhour)+1)*60*60))
 
 	def check_arg(self):
 		if not os.path.exists(self.anapath):
@@ -68,7 +69,7 @@ class FtpFile(object):
 		list_pathpart = filename.split("_")
 		if len(list_pathpart) != 4:
 			return None
-		remote_file = os.path.join(list_pathpart[0],self.remoteday,self.localhour,"access.log.gz")
+		remote_file = os.path.join(list_pathpart[0],self.remoteday,self.remotehour,"access.log.gz")
 		return remote_file
 
 	def get_failedfile(self):
@@ -94,9 +95,9 @@ class FtpFile(object):
 
 	def get_remotetime(self):
 		dir_remotetime = {}
-		if self.remoteday and self.localhour:
+		if self.remoteday and self.remotehour:
 			dir_remotetime.setdefault(self.remoteday, [])
-			dir_remotetime[self.remoteday].append(self.localhour)
+			dir_remotetime[self.remoteday].append(self.remotehour)
 		return dir_remotetime
 		
 
@@ -125,10 +126,10 @@ class FtpClient(object):
 			for nowremoteday,nowremotelist in dir_time.iteritems():
 				dir_remotetime[nowremoteday] = list(set(dir_remotetime.get(nowremoteday,[])+nowremotelist)) 
 			file_result = self.upload_file(dir_upfile)
-			#print "upload file:\n",dir_upfile,file_result
+			print "upload file:\n",dir_upfile,file_result
 		
 			emptylog_result = self.upload_emptylog(dir_remotetime,emptylog)
-			#print "upload time:\n",dir_remotetime,emptylog_result
+			print "upload time:\n",dir_remotetime,emptylog_result
 			if not file_result:
 				self.save_failedfile(dir_upfile,emptylog)
 			if not emptylog_result:
@@ -184,7 +185,7 @@ class FtpClient(object):
 						result = self.check_emptylog(remotehour,"access.log.gz",1)
 						if result:
 							emptydir = os.path.join(path,remoteday,remotehour,"access.log.gz")
-							#print emptydir
+							print emptydir
 							with open(emptylog,'rb') as localfd:
 								self.ftp.storbinary('STOR access.log.gz',localfd,10240)
 						self.ftp.cwd(self.FTP_BASEDIR)
@@ -245,7 +246,7 @@ if __name__ == '__main__':
 	dir_upfile.update(dir_failedfile)
 	dir_remotetime = ftpfile.get_remotetime()
 	emptylog = ftpfile.get_emptylog()
-	'''
+	
 	print "upfile:"
 	for k,v in dir_upfile.iteritems():
 		print ("\t" + k),v
@@ -253,20 +254,20 @@ if __name__ == '__main__':
 	for m,n in dir_remotetime.iteritems():
 		print ("\t" + m),n
 	print ("emptylog:\n\t" + emptylog)
-	'''
+	
 	# upload file and enptylog if los is none
-	ftpclient = FtpClient("cdn_mzc","cDN_5337cLgM","175.6.15.160")
+	ftpclient = FtpClient("user","passwd","127.0.0.1")
 	if not ftpclient.ftp_connect():
 		dir_lasttime = ftpclient.get_failedempty(emptylog)
 		for lastremoteday,lastremotelist in dir_lasttime.iteritems():
 			dir_remotetime[lastremoteday] = list(set(dir_remotetime.get(lastremoteday,[])+lastremotelist)) 
 		ftpclient.save_failedfile(dir_upfile,emptylog)
 		ftpclient.save_failedempty(dir_remotetime,emptylog)
-		#print "connect failed"
+		print "connect failed"
 		sys.exit() 
 	ftpclient.upload_handle(dir_upfile,dir_remotetime,emptylog)
 	ftpclient.quit_ftp()
-
+	
 	
 	
 
