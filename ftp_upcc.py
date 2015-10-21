@@ -3,7 +3,7 @@
 
 import os,time,re,sys,traceback,gzip,string,pickle
 import socket
-from ftplib import FTP
+from ftplib import FTP 
 from optparse import OptionParser
 
 class FtpFile(object):
@@ -16,11 +16,10 @@ class FtpFile(object):
 		self.remoteday = time.strftime("%Y-%m-%d",time.localtime(time.time()-int(uploadhour)*60*60))
 		self.localhour = time.strftime("%H",time.localtime(time.time()-int(uploadhour)*60*60))
 		self.remotehour = time.strftime("%H",time.localtime(time.time()-(int(uploadhour)+1)*60*60))
+		self.currenttime = time.time()
 
-	def check_arg(self):
-		if not os.path.exists(self.anapath):
-			return False
-		return True
+	def check_arg(self,file_path):
+		return os.path.exists(file_path)
 
 	def correction_time(self):
 		if self.localhour == "00":
@@ -38,10 +37,11 @@ class FtpFile(object):
 		list_serpath= str_serpath.split(";")
 		# correct time if hour is 00
 		self.correction_time()
-		if not self.check_arg():
-			return self.dir_upfile
+
 		# get local path and ftp path
 		for file_path in list_serpath:
+			if not self.check_arg(file_path):
+				continue
 			file_daypath = os.path.join(file_path,self.localday)
 			list_filename = self.get_filename(file_daypath)
 			if not list_filename:
@@ -83,6 +83,7 @@ class FtpFile(object):
 		os.unlink(data_file)
 		return self.dir_upfile
 
+	# get access.log that filesize is zero
 	def get_emptylog(self):
 		if not os.path.exists(self.emptyfile):
 			if 0 != os.path.getsize(self.emptyfile):
@@ -93,13 +94,78 @@ class FtpFile(object):
 			fd_zip.close()
 		return self.emptyfile
 
+	# upload 6 hour before empty log
 	def get_remotetime(self):
 		dir_remotetime = {}
-		if self.remoteday and self.remotehour:
-			dir_remotetime.setdefault(self.remoteday, [])
-			dir_remotetime[self.remoteday].append(self.remotehour)
+		remoteday = time.strftime("%Y-%m-%d",time.localtime(self.currenttime-7*60*60))
+		remotehour = time.strftime("%H",time.localtime(self.currenttime-7*60*60))
+		dir_remotetime.setdefault(remoteday, [])
+		dir_remotetime[remoteday].append(remotehour)
 		return dir_remotetime
-		
+
+	# get files that is uploaded 24hour ago	
+	def get_uploadedfile(self):
+		# get time from 27 hours ago to 3 hours ago
+		dir_time = {}
+		self.dir_upfile = {}
+		for inumber in xrange(3,27):
+			nday = time.strftime("%Y%m%d",time.localtime(self.currenttime-inumber*60*60))
+			nhour = time.strftime("%H",time.localtime(self.currenttime-inumber*60*60))
+			if nhour == "00":
+				nday = time.strftime("%Y%m%d",time.localtime(self.currenttime-(inumber+1)*60*60))
+				nhour = "24"
+			if nday in dir_time:
+				dir_time[nday].append(nhour)
+			else:
+				dir_time.update({nday:[nhour]})
+		# get files from 27 hours ago to 3 hours ago 
+		# split local path
+		str_serpath = self.anapath
+		if str_serpath[-1] == ";":
+			str_serpath = str_serpath[:-1]
+		list_serpath= str_serpath.split(";")
+		# get local path and ftp path
+		for file_path in list_serpath:
+			if not self.check_arg(file_path):
+				continue
+			for days,list_hours in dir_time.iteritems():
+				file_daypath = os.path.join(file_path,days)
+				list_filename = self.get_uploadedfilename(file_daypath,list_hours)
+				if not list_filename:
+					continue 
+				for filename in list_filename:
+					local_file = os.path.join(file_daypath,filename)
+					remote_file = self.get_uploadedremotefile(local_file,days)
+					if local_file and remote_file:
+						self.dir_upfile.update({local_file:remote_file})
+		return self.dir_upfile
+
+	# get files that is uploaded but filesize is changed		
+	def get_uploadedfilename(self,file_daypath,list_hours):
+		list_filename = []
+		for hour in list_hours:
+			str_flag = ".*_%s.gz" %(hour)
+			if not os.path.exists(file_daypath):
+				return list_filename
+			list_daypath = os.listdir(file_daypath)
+			for file_name in list_daypath:
+				match = re.match(str_flag,file_name)
+				if match:	
+					list_filename.append(file_name)
+		return list_filename
+
+	def get_uploadedremotefile(self,local_file,days):
+		nhour = time.strftime("%Y%m%d%H",time.localtime(os.path.getmtime(local_file)))
+		nhournow = time.strftime("%Y%m%d%H",time.localtime(self.currenttime-60*60))
+		if nhour == nhournow:
+			filename = os.path.basename(local_file)
+			list_pathpart = filename.split("_")
+			if len(list_pathpart) != 4 or len(days) != 8:
+				return None
+			remotedays = days[0:4]+"-"+days[4:6]+"-"+days[6:]
+			remote_file = os.path.join(list_pathpart[0],remotedays,list_pathpart[2],"access.log.gz")
+			return remote_file
+		return None
 
 class FtpClient(object):
 	
@@ -126,15 +192,20 @@ class FtpClient(object):
 			for nowremoteday,nowremotelist in dir_time.iteritems():
 				dir_remotetime[nowremoteday] = list(set(dir_remotetime.get(nowremoteday,[])+nowremotelist)) 
 			file_result = self.upload_file(dir_upfile)
-			print "upload file:\n",dir_upfile,file_result
+			print "upload file:\n",dir_upfile
+			print "upload file result:",file_result
 		
 			emptylog_result = self.upload_emptylog(dir_remotetime,emptylog)
-			print "upload time:\n",dir_remotetime,emptylog_result
+			print "upload time:\n",dir_remotetime
+			print "upload time result:",emptylog_result
 			if not file_result:
+				print "upload file failed\n"
 				self.save_failedfile(dir_upfile,emptylog)
 			if not emptylog_result:
+				print "upload remote failed\n"
 				self.save_failedempty(dir_remotetime,emptylog)
 		except:
+			print "upload file and remote failed\n"
 			self.save_failedfile(dir_upfile,emptylog)
 			self.save_failedempty(dir_time,emptylog)
 			
@@ -144,12 +215,14 @@ class FtpClient(object):
 		save_path = os.path.join(file_path,"data.pkl")
 		with open(save_path,"wb") as savefd:
 			pickle.dump(dir_upfile,savefd)
+			os.chmod(save_path, 0755)
 
 	def save_failedempty(self,dir_time,emptylog):
 		file_path = os.path.dirname(emptylog)
 		save_path = os.path.join(file_path,"time.pkl")
 		with open(save_path,"wb") as savefd:
 			pickle.dump(dir_time,savefd)
+			os.chmod(save_path, 0755)
 
 	def get_failedempty(self,emptylog):
 		dir_time = {}
@@ -241,13 +314,19 @@ if __name__ == '__main__':
 
 	# get files that need to upload
 	ftpfile = FtpFile(uploadhour = nHourBrfore)
+	# get 2hour ago file
 	dir_upfile = ftpfile.get_updatefile()
+	# get files that failed to upload
 	dir_failedfile = ftpfile.get_failedfile()
 	dir_upfile.update(dir_failedfile)
+	# get uploadedfile but it's size changed (in 24 hours)
+	dir_uploadedfile = ftpfile.get_uploadedfile()
+	dir_upfile.update(dir_uploadedfile)
+	# get upload time when log is empty(6 hour ago)
 	dir_remotetime = ftpfile.get_remotetime()
 	emptylog = ftpfile.get_emptylog()
 	
-	print "upfile:"
+	print "get upfile:"
 	for k,v in dir_upfile.iteritems():
 		print ("\t" + k),v
 	print "remotetime:"
@@ -267,7 +346,6 @@ if __name__ == '__main__':
 		sys.exit() 
 	ftpclient.upload_handle(dir_upfile,dir_remotetime,emptylog)
 	ftpclient.quit_ftp()
-	
 	
 	
 
